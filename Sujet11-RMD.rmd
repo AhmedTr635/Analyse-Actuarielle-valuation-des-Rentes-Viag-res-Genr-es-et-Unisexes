@@ -1,0 +1,633 @@
+---
+title: "Prix de rentes viagères genrés et unisexe"
+output: html_document
+date: "2025-05-15"
+---
+
+```{r setup, include=FALSE}
+options(repos = c(CRAN = "https://cloud.r-project.org"))
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r}
+install.packages("StMoMo")
+install.packages("demography")
+install.packages("ggplot2")
+install.packages("HMDHFDplus")
+```
+
+```{r}
+library(forecast)
+```
+
+Chargement des packages
+
+```{r}
+library(demography)
+#install.packages("StMoMo")  # à exécuter une seule fois
+library(StMoMo)
+library(forecast)
+library(gnm)
+```
+
+Chargement des données
+
+```{r}
+CHEdata <- hmd.mx("CHE", username = "ghalia.chiboub@esprit.tn", password = "Ghalia2003!", label = "Switzerland")
+str(CHEdata)
+```
+
+### (Question2) Estimation des taux de mortalité par maximum de vraisemblance
+
+```{r}
+# Création des vecteurs années
+available_years <- as.numeric(colnames(CHEdata$rate$male))
+# Détection automatique de la dernière année disponible dans les données
+last_year <- max(available_years)
+```
+
+Création automatique des années et âges pour la cohorte 1950
+
+```{r}
+# 
+cohort_years <- as.character(2015:last_year)
+cohort_ages <- as.character(as.numeric(cohort_years) - 1950)
+cohort_ages <- as.character(65:73)
+```
+
+```{r}
+# Extraction taux de mortalité
+qx_male <- CHEdata$rate$male[cohort_ages, cohort_years]
+qx_female <- CHEdata$rate$female[cohort_ages, cohort_years]
+```
+
+```{r}
+# Extraction exposition (pop)
+exposure_male <- CHEdata$pop$male[cohort_ages, cohort_years]
+exposure_female <- CHEdata$pop$female[cohort_ages, cohort_years]
+```
+
+```{r}
+# Écart-type par approximation Poisson
+se_male <- sqrt(qx_male / exposure_male)
+se_female <- sqrt(qx_female / exposure_female)
+```
+
+```{r}
+# IC pour les hommes
+ic95_low_male <- qx_male - 1.96 * se_male
+ic95_up_male  <- qx_male + 1.96 * se_male
+
+ic99_low_male <- qx_male - 2.576 * se_male
+ic99_up_male  <- qx_male + 2.576 * se_male
+
+```
+
+```{r}
+# IC pour les femmes
+ic95_low_female <- qx_female - 1.96 * se_female
+ic95_up_female  <- qx_female + 1.96 * se_female
+
+ic99_low_female <- qx_female - 2.576 * se_female
+ic99_up_female  <- qx_female + 2.576 * se_female
+
+```
+
+```{r}
+# Hommes
+plot(65:73, qx_male[, "2015"], type = "l", col = "blue", lwd = 2,
+     ylab = "Taux de mortalité", xlab = "Âge", main = "Hommes nés en 1950 - année 2015")
+lines(65:73, ic95_low_male[, "2015"], col = "blue", lty = 2)
+lines(65:73, ic95_up_male[, "2015"], col = "blue", lty = 2)
+lines(65:73, ic99_low_male[, "2015"], col = "blue", lty = 3)
+lines(65:73, ic99_up_male[, "2015"], col = "blue", lty = 3)
+
+```
+
+```{r}
+plot(65:73, qx_female[, "2015"], type = "l", col = "red", lwd = 2,
+     ylab = "Taux de mortalité", xlab = "Âge", main = "Femmes nées en 1950 - année 2015")
+lines(65:73, ic95_low_female[, "2015"], col = "red", lty = 2)
+lines(65:73, ic95_up_female[, "2015"], col = "red", lty = 2)
+lines(65:73, ic99_low_female[, "2015"], col = "red", lty = 3)
+lines(65:73, ic99_up_female[, "2015"], col = "red", lty = 3)
+
+```
+
+### (Question3) Estimer les paramètres d’un modèle de Lee-Carter
+
+\*\*Justifications
+
+-   **Choix de la plage d'âge** : 60 à 90 ans\
+    → Âge où les tables sont bien observées, peu de bruit *(cours p. 43–44)*.
+
+-   **Choix de la période** : 1980 à l’année la plus récente\
+    → Cohérence historique + suffisamment de points pour estimer les composantes temporelles.
+
+```{r}
+ages_fit <- 60:90
+years_fit <- 1980:last_year
+
+LCdata <- StMoMoData(
+  data = CHEdata,
+  series = "total",
+  type = "central"
+)
+#ajustement du model (fitiing) :
+LC33 <- lc(link = "logit" )
+LCfit33 <- fit(LC33, data = central2initial(LCdata), ages.fit = ages_fit,  years.fit = years_fit)
+# Effet âge alpha_x
+LCfit33$ax  
+
+# Sensibilité âge beta_x
+LCfit33$bx  
+
+# Indice temporel k_t
+LCfit33$kt
+
+projection <- forecast(LCfit33, years = 25)
+plot(projection, only.kt=TRUE)
+```
+
+Analyse de la mortalité et projections
+
+-   **Évolution de** $k_t$ **dans le temps**\
+    Depuis 1980, l’indice temporel $k_t$ diminue fortement, passant de **13.20** à **-7.63** en 2020.\
+    → Cela traduit une **amélioration constante de la mortalité** en Suisse.\
+    → La courbe correspondante descend régulièrement et se prolonge dans les projections futures, avec une **incertitude croissante visible dans le fan chart** (qui s’élargit légèrement).
+
+-   **Sensibilités par âge** ($b_x$)\
+    Les âges entre **60 et 75 ans** sont les plus sensibles aux variations de $k_t$ (≈ 0.036).\
+    → Aux âges plus avancés (90 ans), la sensibilité diminue (≈ 0.0179).
+
+-   **Interprétation**\
+    Même si la mortalité générale baisse, **cette baisse a moins d’impact aux grands âges**, ce qui explique pourquoi la mortalité projetée reste élevée pour les âges avancés.
+
+-   **Recommandation**\
+    Compte tenu de la diminution de $b_x$ et de l’incertitude croissante dans les projections pour les très grands âges,\
+    → Il est **recommandé de fixer un âge maximum d’ajustement autour de 90 ans**.
+
+### (Question4) Afficher les log taux de mortalités historiques des hommes et des femmes
+
+```{r}
+# Extraction du taux de mortalité qx pour les femmes nées en 1950
+log_qx_females_extract <- log(extractCohort(CHEdata$rate$female, cohort = 1950))
+
+# Extraction du taux de mortalité qx pour les hommes nés en 1950
+log_qx_males_extract <- log(extractCohort(CHEdata$rate$male, cohort = 1950))
+
+# Tracé des taux observés (extraits par cohortes) et des taux estimés
+ages_cohort <- 65:73  # correspond à la cohorte 1950 entre 2015 et 2023
+
+plot(ages_cohort, log_qx_females_extract[names(qx_female[, "2015"])], type = "l", col = "red", lwd = 2,
+     xlab = "Âge", ylab = "Log(qx)", main = "Comparaison log(qx) Femmes nées en 1950")
+lines(ages_cohort, log(qx_female[, "2015"]), col = "blue", lwd = 2, lty = 2)
+legend("topright", legend = c("Cohorte Observée (extractCohort) Female ", "Taux estimé 2015"), col = c("red", "blue"), lty = c(1, 2), lwd = 2)
+
+```
+
+Analyse du modèle Lee-Carter pour la cohorte féminine de 1950
+
+-   Le graphique compare les **log-taux de mortalité observés** (par cohorte) à ceux **estimés par le modèle Lee-Carter** pour les femmes nées en **1950**.
+-   On observe une **légère surestimation** des taux par le modèle aux jeunes âges (65–67 ans), ce qui peut indiquer un **effet cohorte** ou une **limite du modèle**.
+-   À partir de **68 ans**, les deux courbes **se confondent**, montrant une **très bonne adéquation** entre les prédictions du modèle et les données réelles.
+-   Ce résultat **valide l’utilisation du modèle Lee-Carter** pour la projection de mortalité sur cette tranche d’âge.
+
+Pourquoi prendre le log de $q_x$ ?
+
+-   Rend les **modèles linéaires applicables** (comme Lee-Carter)
+-   **Stabilise la variance** -️ **Facilite la visualisation**
+-   Respecte les **hypothèses théoriques** du modèle
+
+------------------------------------------------------------------------
+
+Variables utilisées dans l’analyse
+
+-   `log_qx_males_extract` : valeurs de $\log(q_x)$ pour la cohorte **masculine née en 1950**
+-   `qx_male` : **table de taux estimés** (âge × année), ici on extrait l’année **2015**
+-   `ages_cohort` : vecteur des âges communs (ex. `65:72`)
+
+```{r}
+plot(ages_cohort, 
+     log_qx_males_extract[names(qx_male[, "2015"])], 
+     type = "l", col = "red", lwd = 2,
+     xlab = "Âge", ylab = "Log(qx)", 
+     main = "Comparaison log(qx) Hommes nés en 1950")
+
+lines(ages_cohort, 
+      log(qx_male[, "2015"]), 
+      col = "blue", lwd = 2, lty = 2)
+
+legend("topright", 
+       legend = c("Cohorte Observée (extractCohort) Hommes", "Taux estimé 2015 (Hommes)"), 
+       col = c("red", "blue"), 
+       lty = c(1, 2), lwd = 2)
+
+```
+
+### Comparaison des taux observés et estimés – Cohorte masculine de 1950
+
+-   Le graphique montre la comparaison entre :
+
+    -   Les **taux de mortalité observés** $\log(q_x)$ pour la **cohorte des hommes nés en 1950** (ligne rouge),
+    -   Et les **taux estimés pour l’année 2015** selon le **modèle de Lee-Carter** (ligne bleue en pointillé).
+
+-   On observe une **forte concordance entre les deux courbes jusqu’à l’âge de 68 ans**, indiquant que le modèle estimé **reproduit bien les comportements observés**.
+
+-   À partir de **69 ans**, la courbe de la cohorte observée **dépasse légèrement** les estimations du modèle. Cela peut signaler :
+
+    -   Une **sous-estimation de la mortalité** à ces âges dans les taux projetés de 2015,
+    -   Ou une **fluctuation due à des tailles d’échantillons plus petites** dans les données de la cohorte.
+
+-   Ce type de comparaison est **utile pour valider la cohérence des projections** par rapport aux données historiques.
+
+### (Question5) Estimer la projection centrale (moyenne) sur 25 ans des taux de mortalité
+
+```{r}
+# Projection centrale sur 25 ans
+SuisseForecast <- forecast(LCfit33, h = 25)
+
+# Taux observés
+rates_mat <- LCfit33$Dxt / LCfit33$Ext
+
+# Tracer les taux observés pour l'âge 65
+plot(LCfit33$years, rates_mat["65", ],
+     xlim = range(LCfit33$years, SuisseForecast$years),
+     ylim = range(rates_mat["65", ], SuisseForecast$rates["65", ]),
+     type = "l", xlab = "Année", ylab = "Taux de mortalité",
+     main = "Lee-Carter : Projection centrale à 25 ans - âge 65")
+
+# Ajouter la projection centrale (ligne rouge)
+lines(SuisseForecast$years, SuisseForecast$rates["65", ], col = "red", lwd = 2)
+
+legend("topright", legend = c("Taux observés", "Projection centrale"),
+       col = c("black", "red"), lty = 1, lwd = 2)
+
+```
+
+\*\* Interprétation du graphique de projection centrale des taux de mortalité à 65 ans
+
+Ce graphique illustre l’évolution historique (en **noir**) et la projection centrale (en **rouge**) des taux de mortalité à l’âge de 65 ans,\
+obtenue à partir du modèle de Lee-Carter.
+
+-   Les données historiques s’étendent de 1970 jusqu’à environ 2025.\
+-   La projection couvre un horizon d’environ 25 ans, jusqu’en 2050, générée avec la fonction `forecast()`.
+
+La courbe rouge représente la trajectoire médiane ou attendue des taux de mortalité futurs,\
+c’est-à-dire la projection sans simulation aléatoire, utilisant les valeurs prédites du paramètre temporel `k_t`.
+
+On observe une poursuite de la baisse du taux de mortalité, en continuité avec la tendance passée,\
+traduisant l’amélioration continue des conditions de vie, de la médecine et de la prévention.
+
+Contrairement au graphique de simulation, ici il n’y a pas de bande d’incertitude :\
+la projection centrale correspond à un scénario unique.
+
+Cette projection est utile pour obtenir une vision moyenne de l’évolution attendue,\
+bien qu’elle ne reflète pas la variabilité possible de la mortalité future.
+
+Elle constitue néanmoins une base solide pour des hypothèses actuarielles prudentes.
+
+Ce type de projection est particulièrement important dans la tarification et la provision des rentes viagères,\
+où une sous-estimation des gains de longévité peut entraîner un risque financier important pour l’assureur.
+
+\*\*tracer plusieurs trajectoires simulées
+
+```{r}
+# Projections simulées sur 25 ans
+SuisseSim <- simulate(LCfit33, h = 25, nsim = 5000)
+
+# Taux observés
+rates_mat <- LCfit33$Dxt / LCfit33$Ext
+
+# Tracer les taux observés pour l'âge 65
+plot(LCfit33$years, rates_mat["65", ],
+     xlim = range(LCfit33$years, SuisseSim$years),
+     ylim = range(rates_mat["65", ], SuisseSim$rates["65", , ]),
+     type = "l", xlab = "Année", ylab = "Taux de mortalité",
+     main = "Lee-Carter : Taux de mortalité simulés à partir de 2005 - âge 65")
+
+# Ajouter les 5000 trajectoires simulées
+matlines(SuisseSim$years, SuisseSim$rates["65", , ], type = "l", lty = 1)
+
+
+```
+
+\*\* Simulation des taux de mortalité à 65 ans selon le modèle Lee-Carter
+
+-   Interprétation du graphique :
+
+Ce graphique représente l’évolution simulée des taux de mortalité à l’âge de 65 ans à partir de l’année 2005,\
+selon le modèle de Lee-Carter appliqué à la cohorte suisse de 1950.
+
+-   La courbe **noire** correspond aux taux de mortalité historiques observés jusqu’en 2005.\
+-   Les multiples courbes **colorées** illustrent les trajectoires simulées des taux de mortalité futurs, de 2006 à 2040.
+
+On observe une tendance globale à la baisse des taux de mortalité dans la zone simulée,\
+ce qui reflète l’amélioration attendue de la longévité dans les années à venir.
+
+La dispersion des trajectoires simulées traduit l’incertitude inhérente aux projections stochastiques du modèle Lee-Carter,\
+en tenant compte de la variabilité aléatoire dans l’évolution de la composante temporelle `k_t`.
+
+Cette incertitude est cruciale pour la tarification des rentes viagères :\
+les assureurs doivent anticiper non seulement une baisse probable des taux de mortalité,\
+mais aussi la possibilité de scénarios plus ou moins favorables à la longévité.
+
+Enfin, le fait que les trajectoires simulées restent relativement regroupées indique que le modèle est stable\
+et que les paramètres estimés fournissent une base fiable pour la projection de la mortalité future à cet âge spécifique.
+
+### (Question6) Afficher les log taux de mortalités historiques et projetés pour les deux cohortes, à partir de 2005
+
+```{r}
+# Probabilités pour les intervalles du fan chart
+probs <- c(2.5, 10, 25, 50, 75, 90, 97.5)
+
+#50% → la médiane (le scénario central),
+#2.5% et 97.5% → bordures de l’intervalle de confiance à 95%,
+#10% et 90% → intervalle de confiance à 80%,
+#25% et 75% → intervalle à 50%.
+
+# Calcul des taux observés
+qxt <- LCfit33$Dxt / LCfit33$Ext
+
+# Taux simulés pour l'âge 65
+sim_rates_65 <- t(SuisseSim$rates["65", , ])  # transpose car matplot veut les colonnes
+
+```
+
+```{r}
+# Plot des taux observés (sur échelle log)
+matplot(LCfit33$years, qxt["65", ],
+        xlim = c(1980, 2048),
+        ylim = c(min(qxt["65", ], sim_rates_65), max(qxt["65", ], sim_rates_65)),
+        pch = 20, col = "black", log = "y",
+        xlab = "Année", ylab = "Taux de mortalité (échelle log)",
+        main = "Taux de mortalité à 65 ans avec projections simulées")
+# Ajout du fan chart à partir de 2020
+library(fanplot)
+fan(sim_rates_65, start = 2020, probs = probs, 
+    n.fan = 4, 
+    fan.col = colorRampPalette(c("skyblue", "black")),
+    ln = NULL)
+```
+
+### (Question7) l’expression de l’espérance de vie résiduelle (cohorte) à un âge x ∈ N
+
+```{r}
+dim(SuisseSim$rates)
+# exemple possible : (âges, années, nsim)
+
+
+mean_rates <- apply(SuisseSim$rates, c(1, 2), mean)  # moyenne sur la 3e dimension
+year_proj <- 2040
+year_index <- which(SuisseSim$years == year_proj)
+
+# Calcul de l'espérance de vie résiduelle
+e65 <- 0
+prod_surv <- 1
+mu_proj <- mean_rates[, year_index]  # vecteur taux par âge pour 2040
+ages_proj <- as.numeric(rownames(mean_rates))
+mu_65plus <- mu_proj[ages_proj >= 65]
+for (i in seq_along(mu_65plus)) {
+  p_surv <- exp(-mu_65plus[i])
+  e65 <- e65 + prod_surv
+  prod_surv <- prod_surv * p_surv
+}
+
+print(paste("Espérance de vie résiduelle à 65 ans en", year_proj, ":", round(e65, 2), "années"))
+
+```
+
+### (Question8) calcul de la valeur actuelle probable du contrat
+
+```{r}
+calc_VAP<- function(qx, r = 0.03) {
+  n <- length(qx)
+  v <- 1 / (1 + r)
+  px <- cumprod(c(1, 1 - qx[-n]))  # probabilité de survie à chaque année
+  
+  vap <- sum(v^(0:(n-1)) * px)  # somme actualisée des probabilités de survie
+  return(vap)
+}
+```
+
+Choix du taux d’actualisation : pourquoi 0.03 ?
+
+**0.03 = 3% par an**\
+C’est un taux d’actualisation **couramment utilisé**, notamment :
+
+-   Comme **taux sans risque**, proche des **rendements des obligations d’État** ;
+-   Comme **approximation d’un taux moyen** dans les **calculs actuariels**.
+
+Ce taux *n’est pas une valeur fixe obligatoire*.\
+Il est souvent choisi **par convention dans les exercices pédagogiques**.
+
+------------------------------------------------------------------------
+
+En pratique, ce taux dépend de plusieurs facteurs :\
+- **La politique de l’entreprise**\
+*Exemple* : taux technique utilisé en **assurance vie**.\
+- **Les conditions économiques**\
+*Exemple* : taux d’intérêt du **marché à long terme**.
+
+### (Question9) Calcul de la VAP
+
+```{r}
+#Chaque assuré a contracté un contrat de rente viagère temporaire en 2015
+qx_male_65 <- qx_male[as.character(65:(65 + ncol(qx_male) - 1)), "2015"]
+qx_female_65 <- qx_female[as.character(65:(65 + ncol(qx_female) - 1)), "2015"]
+
+vap_male <- calc_VAP(qx_male_65)
+vap_female <- calc_VAP(qx_female_65)
+
+print(qx_male_65)
+print(qx_female_65)
+
+
+cat("VAP Homme :", vap_male, "\n")
+cat("VAP Femme :", vap_female, "\n")
+```
+
+\*\*Interprétation de la VAP et différences selon le genre
+
+**Plus la VAP est élevée**, plus le **coût ou la valeur du contrat** est important.\
+→ Cela signifie que l’assuré a **plus de chances de vivre longtemps**,\
+et donc que le contrat devra **potentiellement verser une rente pendant une période plus longue**.
+
+**Les femmes ont des taux de mortalité plus faibles** (moins de décès chaque année),\
+ce qui implique une **espérance de vie plus longue**.
+
+➡La rente doit donc être versée plus longtemps,\
+ce qui **augmente la valeur actuelle** du contrat (VAP).
+
+**Conclusion** : la **VAP féminine est légèrement supérieure** à la VAP masculine,\
+en raison de cette espérance de vie plus élevée.
+
+### (Question10) Un assureur peut-il différencier ses tarifs selon le genre de ses assurés ?
+
+### Différenciation des tarifs selon le genre
+
+**Oui, un assureur peut différencier ses tarifs selon le genre de ses assurés.**
+
+Justification :
+
+-   **Les tables de mortalité** montrent une différence significative entre hommes et femmes :\
+    → **Les femmes vivent généralement plus longtemps.**
+
+-   Cette différence impacte directement le **coût des contrats d’assurance vie ou de rentes viagères** :\
+    → Les femmes ont une **espérance de vie plus longue**, donc une **valeur actuelle probable (VAP)** plus élevée.
+
+-   Par conséquent, **les primes ne seront pas les mêmes** entre hommes et femmes pour **couvrir le même risque**.
+
+-   Cette différenciation permet à l’assureur de **mieux ajuster ses tarifs au risque réel**,\
+    assurant ainsi **l’équilibre financier du produit**.
+
+```{r}
+# Extraction des qx totaux à partir de l'âge 65 pour l'année 2015
+# Calcul du taux total (hommes + femmes) pondéré par exposition
+qx_total <- (qx_male * exposure_male + qx_female * exposure_female) / (exposure_male + exposure_female)
+
+# Extraction des âges >= 65 pour 2015
+ages <- as.numeric(rownames(qx_total))
+qx_total_65 <- qx_total[as.character(ages[ages >= 65]), "2015"]
+
+# Calcul de la VAP globale
+vap_total <- calc_VAP(qx_total_65)
+
+cat("VAP Population globale :", vap_total, "\n")
+```
+
+Valeurs actuelles probables (VAP)
+
+-   **VAP Homme** : 7.631432\
+-   **VAP Femme** : 7.793868\
+-   **VAP Globale** : 7.714943
+
+Interprétation :
+
+La **VAP globale** se situe **bien entre la VAP homme et la VAP femme**, ce qui est **parfaitement cohérent**.
+
+> En effet, la VAP globale est une **moyenne pondérée** des deux valeurs selon la répartition hommes/femmes.\
+> Elle doit donc **logiquement être comprise entre les deux extrêmes**.
+
+### (Question11) une autre méthode de tarification unisexe adapté au portefeuille de l’assureur
+
+Proposition : Tarification unisexe pondérée selon la composition du portefeuille Principe : Construire une table de mortalité synthétique à partir des taux projetés : unisexe Calcul de la prime : Utiliser cette table pondérée pour estimer l’espérance de vie résiduelle et donc la valeur actuelle probable (VAP) de la rente viagère unisexe.
+
+```{r}
+# Calcul de la table mixte (hommes + femmes pondérés par l'exposition)
+qx_mixte <- (qx_male * exposure_male + qx_female * exposure_female) / (exposure_male + exposure_female)
+
+# Fonction pour ajuster l'âge (exemple : âge pivot = 1 an pour les femmes, -2 ans pour les hommes)
+tarif_unisexe <- function(age, sexe) {
+  age_ajuste <- if (sexe == "F") age + 1 else age - 2
+  
+  if (!as.character(age_ajuste) %in% rownames(qx_mixte)) {
+    warning(paste("Âge ajusté", age_ajuste, "non présent."))
+    return(NA)
+  }
+  
+  age_fin <- min(age_ajuste + 29, age_max_dispo)
+  ages_vec <- as.character(age_ajuste:age_fin)
+  ages_vec <- ages_vec[ages_vec %in% rownames(qx_mixte)]
+  
+  qx_vect <- qx_mixte[ages_vec, "2015"]
+  calc_VAP(qx_vect)
+}
+
+age_max_dispo <- max(as.numeric(rownames(qx_mixte)))
+
+primes_pures_F <- sapply(ages, function(a) {
+  age_fin <- min(a + 29, age_max_dispo)
+  qx_vect <- qx_female[as.character(a:age_fin), "2015"]
+  qx_vect <- qx_vect[!is.na(qx_vect)]
+  calc_VAP(qx_vect)
+})
+
+primes_unisexe_F <- sapply(ages, function(a) {
+  tarif_unisexe(a, "F")
+})
+
+primes_pures_H <- sapply(ages, function(a) {
+  age_fin <- min(a + 29, age_max_dispo)
+  qx_vect <- qx_male[as.character(a:age_fin), "2015"]
+  qx_vect <- qx_vect[!is.na(qx_vect)]
+  calc_VAP(qx_vect)
+})
+```
+
+```{r}
+# Calcul primes unisexes hommes (avec ajustement âge -2)
+primes_unisexe_H <- sapply(ages, function(a) {
+  tarif_unisexe(a, "H")
+})
+
+# Nettoyage
+valid_idx <- is.finite(primes_pures_F) & is.finite(primes_unisexe_F)
+
+# Tracé corrigé
+plot(ages[valid_idx], primes_pures_F[valid_idx], type = "l", col = "red",
+     ylim = range(c(primes_pures_F[valid_idx], primes_unisexe_F[valid_idx])),
+     main = "Impact de l’unisexité sur la prime d’une femme", 
+     ylab = "Prime pure", xlab = "Âge")
+
+lines(ages[valid_idx], primes_unisexe_F[valid_idx], col = "blue", lty = 2)
+legend("topright", legend = c("Prime pure femme", "Prime unisexe femme"), 
+       col = c("red", "blue"), lty = c(1, 2))
+# Plot pour un homme : Prime pure vs Prime unisexe
+plot(ages, primes_pures_H, type = "l", col = "blue",
+     ylim = range(c(primes_pures_H, primes_unisexe_H), na.rm = TRUE),
+     main = "Impact de l’unisexité sur la prime d’un homme",
+     ylab = "Prime pure", xlab = "Âge")
+
+lines(ages, primes_unisexe_H, col = "blue", lty = 2)
+legend("topright", legend = c("Prime pure", "Prime unisexe"), col = "blue", lty = 1:2)
+##ecarts###
+ecart_F <- primes_unisexe_F - primes_pures_F
+ecart_H <- primes_unisexe_H - primes_pures_H
+resultats <- data.frame(
+  Age = ages,
+  Prime_pure_F = primes_pures_F,
+  Prime_unisexe_F = primes_unisexe_F,
+  Ecart_F = ecart_F,
+  Prime_pure_H = primes_pures_H,
+  Prime_unisexe_H = primes_unisexe_H,
+  Ecart_H = ecart_H
+)
+
+print(resultats)
+```
+
+\*\* Transfert de risque entre les sexes avec tarif unisexe
+
+Ce que nous observons ici, c’est un **transfert de risque entre les sexes** :
+
+Pour les femmes :\
+- Le **tarif unisexe** diminue la prime par rapport à leur **prime pure**.\
+- ➤ Elles **paient moins** que ce que leur risque réel justifierait.\
+- ➤ Elles **bénéficient d’un transfert de risque positif**, car une partie de leur risque est assumée par les hommes.
+
+Pour les hommes :\
+- Le **tarif unisexe** augmente la prime par rapport à leur **prime pure**.\
+- ➤ Ils **paient plus** que ce que leur risque réel impliquerait.\
+- ➤ Ils **subissent un transfert de risque négatif**, car ils financent une partie du risque féminin.
+
+------------------------------------------------------------------------
+
+En résumé :\
+Ce **transfert de risque** agit comme une **mutualisation** : - Les hommes **"subventionnent" partiellement** les femmes. - Les femmes **"profitent" de cette mutualisation**, avec un coût réduit.
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
